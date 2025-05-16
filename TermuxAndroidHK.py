@@ -5,6 +5,7 @@ import json
 import time
 import requests
 import subprocess
+import sys
 from datetime import datetime
 
 # Version information
@@ -48,6 +49,86 @@ def get_sms_messages(limit=10):
         print("[-] Error parsing SMS data")
         return []
 
+def test_telegram_connection():
+    """Test the Telegram connection with multiple methods"""
+    print("\n[+] TESTING TELEGRAM CONNECTION")
+    print(f"[+] Bot Token: {TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}")
+    print(f"[+] Chat ID: {TELEGRAM_CHAT_ID}")
+    
+    # Test internet connectivity first
+    print("\n[+] Testing internet connectivity...")
+    try:
+        response = requests.get("https://api.telegram.org", timeout=10)
+        print(f"[+] Internet connectivity: OK (Status code: {response.status_code})")
+    except Exception as e:
+        print(f"[-] Internet connectivity test failed: {e}")
+        print("[-] Please check your internet connection")
+    
+    # Method 1: Basic POST request
+    print("\n[+] Testing Method 1: Basic POST request...")
+    try:
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        test_message = "🔵 Test message #1 (Basic POST)"
+        
+        response = requests.post(
+            api_url, 
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": test_message
+            },
+            timeout=15
+        )
+        print(f"[+] Response: HTTP {response.status_code}")
+        print(f"[+] Response body: {response.text[:100]}")
+        
+        if response.status_code == 200:
+            print("[+] Method 1: SUCCESS")
+        else:
+            print(f"[-] Method 1: FAILED - {response.text}")
+    except Exception as e:
+        print(f"[-] Method 1 threw an exception: {e}")
+    
+    # Method 2: URL parameters
+    print("\n[+] Testing Method 2: URL parameters...")
+    try:
+        test_message = "🟢 Test message #2 (URL parameters)"
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={requests.utils.quote(test_message)}"
+        
+        response = requests.get(api_url, timeout=15)
+        print(f"[+] Response: HTTP {response.status_code}")
+        print(f"[+] Response body: {response.text[:100]}")
+        
+        if response.status_code == 200:
+            print("[+] Method 2: SUCCESS")
+        else:
+            print(f"[-] Method 2: FAILED - {response.text}")
+    except Exception as e:
+        print(f"[-] Method 2 threw an exception: {e}")
+    
+    # Method 3: cURL as a last resort
+    print("\n[+] Testing Method 3: Using cURL...")
+    try:
+        test_message = "🟡 Test message #3 (cURL)"
+        curl_cmd = [
+            "curl", "-s",
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={test_message}"
+        ]
+        
+        result = subprocess.run(curl_cmd, capture_output=True, text=True)
+        print(f"[+] cURL exit code: {result.returncode}")
+        print(f"[+] cURL output: {result.stdout[:100]}")
+        
+        if result.returncode == 0 and "true" in result.stdout.lower():
+            print("[+] Method 3: SUCCESS")
+        else:
+            print(f"[-] Method 3: FAILED - {result.stderr}")
+    except Exception as e:
+        print(f"[-] Method 3 threw an exception: {e}")
+    
+    # Final assessment
+    print("\n[+] Test complete. Check your Telegram for test messages.")
+    print("[+] If you didn't receive any messages, please verify your bot token and chat ID.")
+
 def send_to_telegram(message):
     """Send message to Telegram bot"""
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -55,55 +136,80 @@ def send_to_telegram(message):
     # Debug information
     print(f"[DEBUG] Sending to Telegram. Token length: {len(TELEGRAM_BOT_TOKEN)}, Chat ID: {TELEGRAM_CHAT_ID}")
     
+    # Try method 1 - POST with HTML
     try:
-        # Try with HTML parsing mode first
+        print(f"[DEBUG] Try method 1 - POST with HTML")
         params = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "HTML"
         }
         
-        # Debug information
-        print(f"[DEBUG] Making POST request to: {api_url}")
+        response = requests.post(api_url, data=params, timeout=15)
         
-        response = requests.post(api_url, data=params, timeout=10)
-        
-        # Debug information
         print(f"[DEBUG] Response status code: {response.status_code}")
         
-        if response.status_code != 200:
-            # If HTML parsing fails, try without parse mode
-            print(f"[DEBUG] HTML parse mode failed, trying without parse mode")
-            params = {
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": message.replace("<b>", "").replace("</b>", "")
-            }
-            
-            response = requests.post(api_url, data=params, timeout=10)
-            
-            if response.status_code != 200:
-                print(f"[-] Failed to send message to Telegram: {response.text}")
-                return False
-        
-        print(f"[+] Message sent successfully to Telegram!")
-        return True
+        if response.status_code == 200:
+            print(f"[+] Message sent successfully with method 1!")
+            return True
     except Exception as e:
-        print(f"[-] Error sending to Telegram: {e}")
-        # Try alternative method
-        try:
-            print(f"[DEBUG] Trying alternative method...")
-            api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={requests.utils.quote(message.replace('<b>', '').replace('</b>', ''))}"
-            response = requests.get(api_url, timeout=10)
-            
-            if response.status_code == 200:
-                print(f"[+] Message sent successfully with alternative method!")
-                return True
-            else:
-                print(f"[-] Alternative method also failed: {response.text}")
-                return False
-        except Exception as e2:
-            print(f"[-] Alternative method also failed with error: {e2}")
-            return False
+        print(f"[-] Method 1 failed: {e}")
+    
+    # Try method 2 - POST without HTML
+    try:
+        print(f"[DEBUG] Try method 2 - POST without HTML")
+        params = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message.replace("<b>", "").replace("</b>", "")
+        }
+        
+        response = requests.post(api_url, data=params, timeout=15)
+        
+        print(f"[DEBUG] Response status code: {response.status_code}")
+        
+        if response.status_code == 200:
+            print(f"[+] Message sent successfully with method 2!")
+            return True
+    except Exception as e:
+        print(f"[-] Method 2 failed: {e}")
+    
+    # Try method 3 - GET request
+    try:
+        print(f"[DEBUG] Try method 3 - GET request")
+        cleaned_message = message.replace('<b>', '').replace('</b>', '')
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={requests.utils.quote(cleaned_message)}"
+        
+        response = requests.get(api_url, timeout=15)
+        
+        print(f"[DEBUG] Response status code: {response.status_code}")
+        
+        if response.status_code == 200:
+            print(f"[+] Message sent successfully with method 3!")
+            return True
+    except Exception as e:
+        print(f"[-] Method 3 failed: {e}")
+    
+    # Try method 4 - cURL as a last resort
+    try:
+        print(f"[DEBUG] Try method 4 - cURL")
+        cleaned_message = message.replace('<b>', '').replace('</b>', '')
+        curl_cmd = [
+            "curl", "-s",
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={cleaned_message}"
+        ]
+        
+        result = subprocess.run(curl_cmd, capture_output=True, text=True)
+        
+        print(f"[DEBUG] cURL exit code: {result.returncode}")
+        
+        if result.returncode == 0 and "true" in result.stdout.lower():
+            print(f"[+] Message sent successfully with method 4!")
+            return True
+    except Exception as e:
+        print(f"[-] Method 4 failed: {e}")
+    
+    print("[-] All methods failed to send message to Telegram")
+    return False
 
 def format_sms(message):
     """Format SMS message for Telegram"""
@@ -347,4 +453,10 @@ def main():
             time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
+    # Check for test flag
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        print("[+] Running in test mode")
+        test_telegram_connection()
+        sys.exit(0)
+    
     main()
